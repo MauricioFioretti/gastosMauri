@@ -1,5 +1,5 @@
 // ================== CONFIG ==================
-const API_URL = "https://script.google.com/macros/s/AKfycbyHAoVHsGL_ucP_1X74no6dcAnxW2MctpEyxzUnU0sDdVzNBIANYH_TTIsJrjIleW4f8g/exec"; // <--- cambiá esto
+const API_URL = "https://script.google.com/macros/s/AKfycbxOUyVMSOPHvGRJXobkftG-tMDZUzDjTw795ao2t1xxTBVOEcqphY7GC3bjc1HrVdxJ/exec"; // <--- cambiá esto
 
 const TIPO_INGRESO = "ingreso";
 const TIPO_GASTO   = "gasto";
