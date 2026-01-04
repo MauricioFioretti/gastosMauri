@@ -267,11 +267,16 @@ async function getAhorrosDesdeAPI() {
     const data = await resp.json();
     const ah = Number(data.ahorros) || 0;
     AHORROS_ACTUALES = ah;
-    inputAhorros.value = ah; // lo muestra en el input
+    inputAhorros.placeholder = `Actual: ${formatMoneda.format(ah)}`;
+    
+    // ⚠️ NO precargamos el input
+    inputAhorros.value = "";
+
     return ah;
   } catch (err) {
     console.error("Error al obtener ahorros", err);
     AHORROS_ACTUALES = 0;
+    inputAhorros.value = "";
     return 0;
   }
 }
