@@ -9,6 +9,9 @@
   --accent: #4cc9f0;
   --ingreso: #27c084;
   --gasto: #ff6b6b;
+
+  --ahorro: #b06cff;     /* nuevo */
+  --total: #ffd166;      /* nuevo */
 }
 
 * {
@@ -55,7 +58,7 @@ body {
   padding: 1.2rem 1.3rem;
   border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.03);
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.2rem;
 }
 
 .resumen h2 {
@@ -98,11 +101,48 @@ body {
 .resumen-saldo .resumen-valor {
   color: var(--accent);
 }
-.resumen-ingresos .resumen-valor {
-  color: var(--ingreso);
+.resumen-ahorros .resumen-valor {
+  color: var(--ahorro);
 }
-.resumen-gastos .resumen-valor {
-  color: var(--gasto);
+.resumen-total .resumen-valor {
+  color: var(--total);
+}
+
+/* ======= SECCIÓN AHORROS (nuevo) ======= */
+.ahorros {
+  background: var(--surface);
+  padding: 1.1rem 1.3rem;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin-bottom: 1.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.ahorros label {
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.ahorros input {
+  background: #05060b;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: #fff;
+  font-size: 0.95rem;
+}
+
+.ahorros button {
+  align-self: flex-start;
+  background: var(--ahorro);
+  color: #05060b;
+  border: none;
+}
+
+.ahorros button:hover {
+  filter: brightness(1.08);
 }
 
 /* ======= SECCIÓN AGREGAR ======= */
@@ -282,6 +322,10 @@ button:active {
   }
 
   .resumen {
+    padding: 1rem;
+  }
+
+  .ahorros {
     padding: 1rem;
   }
 

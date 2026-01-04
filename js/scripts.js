@@ -1,5 +1,5 @@
 // ================== CONFIG ==================
-const API_URL = "https://script.google.com/macros/s/AKfycbxOUyVMSOPHvGRJXobkftG-tMDZUzDjTw795ao2t1xxTBVOEcqphY7GC3bjc1HrVdxJ/exec"; // <--- cambiá esto
+const API_URL = "https://script.google.com/macros/s/AKfycbxOUyVMSOPHvGRJXobkftG-tMDZUzDjTw795ao2t1xxTBVOEcqphY7GC3bjc1HrVdxJ/exec"; // <--- tu URL
 
 const TIPO_INGRESO = "ingreso";
 const TIPO_GASTO   = "gasto";
@@ -16,6 +16,9 @@ const MESES_ES = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
 ];
+
+// Estado (para recalcular total)
+let AHORROS_ACTUALES = 0;
 
 // ================== HEADER ==================
 const header = document.querySelector("header");
@@ -44,12 +47,13 @@ const filaResumen = document.createElement("div");
 filaResumen.classList = "resumen-fila";
 seccionResumen.appendChild(filaResumen);
 
+// Card: Plata actual
 const cardSaldo = document.createElement("div");
 cardSaldo.classList = "resumen-card resumen-saldo";
 filaResumen.appendChild(cardSaldo);
 
 const pSaldoLabel = document.createElement("p");
-pSaldoLabel.innerText = "Saldo actual";
+pSaldoLabel.innerText = "Plata actual";
 cardSaldo.appendChild(pSaldoLabel);
 
 const pSaldoValor = document.createElement("p");
@@ -58,33 +62,56 @@ pSaldoValor.classList = "resumen-valor";
 pSaldoValor.innerText = "$0";
 cardSaldo.appendChild(pSaldoValor);
 
-const cardIngresos = document.createElement("div");
-cardIngresos.classList = "resumen-card resumen-ingresos";
-filaResumen.appendChild(cardIngresos);
+// Card: Ahorros
+const cardAhorros = document.createElement("div");
+cardAhorros.classList = "resumen-card resumen-ahorros";
+filaResumen.appendChild(cardAhorros);
 
-const pIngLabel = document.createElement("p");
-pIngLabel.innerText = "Ingresos totales";
-cardIngresos.appendChild(pIngLabel);
+const pAhoLabel = document.createElement("p");
+pAhoLabel.innerText = "Ahorros";
+cardAhorros.appendChild(pAhoLabel);
 
-const pIngValor = document.createElement("p");
-pIngValor.id = "ingresos-totales";
-pIngValor.classList = "resumen-valor";
-pIngValor.innerText = "$0";
-cardIngresos.appendChild(pIngValor);
+const pAhoValor = document.createElement("p");
+pAhoValor.id = "ahorros";
+pAhoValor.classList = "resumen-valor";
+pAhoValor.innerText = "$0";
+cardAhorros.appendChild(pAhoValor);
 
-const cardGastos = document.createElement("div");
-cardGastos.classList = "resumen-card resumen-gastos";
-filaResumen.appendChild(cardGastos);
+// Card: Total
+const cardTotal = document.createElement("div");
+cardTotal.classList = "resumen-card resumen-total";
+filaResumen.appendChild(cardTotal);
 
-const pGasLabel = document.createElement("p");
-pGasLabel.innerText = "Gastos totales";
-cardGastos.appendChild(pGasLabel);
+const pTotalLabel = document.createElement("p");
+pTotalLabel.innerText = "Total (plata + ahorros)";
+cardTotal.appendChild(pTotalLabel);
 
-const pGasValor = document.createElement("p");
-pGasValor.id = "gastos-totales";
-pGasValor.classList = "resumen-valor";
-pGasValor.innerText = "$0";
-cardGastos.appendChild(pGasValor);
+const pTotalValor = document.createElement("p");
+pTotalValor.id = "total";
+pTotalValor.classList = "resumen-valor";
+pTotalValor.innerText = "$0";
+cardTotal.appendChild(pTotalValor);
+
+// ------- Sección AHORROS (nuevo) -------
+const seccionAhorros = document.createElement("section");
+seccionAhorros.classList = "ahorros";
+main.appendChild(seccionAhorros);
+
+const labelAhorros = document.createElement("label");
+labelAhorros.innerText = "Ingresar ahorros:";
+labelAhorros.htmlFor = "input-ahorros";
+seccionAhorros.appendChild(labelAhorros);
+
+const inputAhorros = document.createElement("input");
+inputAhorros.type = "number";
+inputAhorros.id = "input-ahorros";
+inputAhorros.placeholder = "Ej: 250000";
+inputAhorros.step = "0.01";
+seccionAhorros.appendChild(inputAhorros);
+
+const btnGuardarAhorros = document.createElement("button");
+btnGuardarAhorros.innerText = "Guardar ahorros";
+seccionAhorros.appendChild(btnGuardarAhorros);
 
 // ------- Sección para agregar movimiento -------
 const seccionAgregar = document.createElement("section");
@@ -148,12 +175,13 @@ seccionListas.classList = "listas-meses";
 main.appendChild(seccionListas);
 
 // ================== FUNCIONES ==================
-
-function actualizarResumen(totalIng, totalGas) {
+function actualizarResumen(totalIng, totalGas, ahorros) {
   const saldo = totalIng - totalGas;
-  pSaldoValor.innerText   = formatMoneda.format(saldo);
-  pIngValor.innerText     = formatMoneda.format(totalIng);
-  pGasValor.innerText     = formatMoneda.format(totalGas);
+  const total = saldo + (Number(ahorros) || 0);
+
+  pSaldoValor.innerText = formatMoneda.format(saldo);
+  pAhoValor.innerText   = formatMoneda.format(Number(ahorros) || 0);
+  pTotalValor.innerText = formatMoneda.format(total);
 }
 
 // Render de los grupos por mes
@@ -165,16 +193,13 @@ function renderMeses(gruposOrdenados) {
 
     const contMes = document.createElement("section");
     contMes.classList = "grupo-mes";
-    // para tonos distintos por mes:
     contMes.dataset.index = indice;
     seccionListas.appendChild(contMes);
 
-    // Título: Diciembre 2025, etc.
     const tituloMes = document.createElement("h2");
     tituloMes.innerText = `${MESES_ES[monthIndex]} ${year}`;
     contMes.appendChild(tituloMes);
 
-    // Subresumen del mes
     const subResumen = document.createElement("p");
     const saldoMes = totalIngresos - totalGastos;
     subResumen.classList = "grupo-mes-resumen";
@@ -212,7 +237,6 @@ function renderMeses(gruposOrdenados) {
       fila2.classList = "mov-fila-2";
       card.appendChild(fila2);
 
-      // fecha cortita
       if (mov.timestamp) {
         const fecha = new Date(mov.timestamp);
         const pFecha = document.createElement("span");
@@ -236,9 +260,44 @@ function renderMeses(gruposOrdenados) {
   });
 }
 
+// ======== AHORROS API ========
+async function getAhorrosDesdeAPI() {
+  try {
+    const resp = await fetch(API_URL + "?modo=getAhorros");
+    const data = await resp.json();
+    const ah = Number(data.ahorros) || 0;
+    AHORROS_ACTUALES = ah;
+    inputAhorros.value = ah; // lo muestra en el input
+    return ah;
+  } catch (err) {
+    console.error("Error al obtener ahorros", err);
+    AHORROS_ACTUALES = 0;
+    return 0;
+  }
+}
+
+async function setAhorrosEnAPI(nuevoValor) {
+  const v = Number(nuevoValor);
+  if (isNaN(v)) return;
+
+  const url = API_URL + "?modo=setAhorros&ahorros=" + encodeURIComponent(String(v));
+  try {
+    const resp = await fetch(url);
+    const data = await resp.json();
+    AHORROS_ACTUALES = Number(data.ahorros) || v;
+    inputAhorros.value = AHORROS_ACTUALES;
+  } catch (err) {
+    console.error("Error al guardar ahorros", err);
+  }
+}
+
 // Cargar movimientos desde la API
 async function cargarMovimientosDesdeAPI() {
   try {
+    // 1) traer ahorros primero
+    const ahorros = await getAhorrosDesdeAPI();
+
+    // 2) traer movimientos
     const resp = await fetch(API_URL); // modo list
     const movimientos = await resp.json();
 
@@ -284,8 +343,8 @@ async function cargarMovimientosDesdeAPI() {
       return bKey - aKey;
     });
 
-    // Actualizar resumen general
-    actualizarResumen(totalIngresos, totalGastos);
+    // Actualizar resumen general (solo plata actual + ahorros + total)
+    actualizarResumen(totalIngresos, totalGastos, ahorros);
 
     // Render de las listas por mes
     renderMeses(gruposOrdenados);
@@ -312,7 +371,6 @@ async function agregarMovimientoAPI(concepto, monto, tipo) {
 
   try {
     await fetch(url);
-    // recargar datos
     await cargarMovimientosDesdeAPI();
   } catch (err) {
     console.error("Error al agregar movimiento", err);
@@ -320,16 +378,27 @@ async function agregarMovimientoAPI(concepto, monto, tipo) {
 }
 
 // ================== EVENTOS ==================
-
 buttonAgregar.addEventListener("click", () => {
   agregarMovimientoAPI(inputConcepto.value, inputMonto.value, selectTipo.value);
   inputConcepto.value = "";
   inputMonto.value = "";
-  selectTipo.value = TIPO_GASTO; // por defecto gasto si querés
+  selectTipo.value = TIPO_GASTO;
   inputConcepto.focus();
 });
 
-// Enter en concepto -> pasa al monto
+btnGuardarAhorros.addEventListener("click", async () => {
+  await setAhorrosEnAPI(inputAhorros.value);
+  // recalcula el resumen sin depender del orden (vuelve a cargar todo)
+  await cargarMovimientosDesdeAPI();
+});
+
+inputAhorros.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    btnGuardarAhorros.click();
+  }
+});
+
 inputConcepto.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
@@ -337,7 +406,6 @@ inputConcepto.addEventListener("keydown", (event) => {
   }
 });
 
-// Enter en monto -> botón
 inputMonto.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
