@@ -18,7 +18,7 @@ const MESES_ES = [
 ];
 
 // Estado (para recalcular total)
-let AHORROS_ACTUALES = 0;
+let EFECTIVO_ACTUAL = 0;
 
 // ================== HEADER ==================
 const header = document.querySelector("header");
@@ -47,7 +47,7 @@ const filaResumen = document.createElement("div");
 filaResumen.classList = "resumen-fila";
 seccionResumen.appendChild(filaResumen);
 
-// Card: Plata actual
+// Card: Plata actual (saldo)
 const cardSaldo = document.createElement("div");
 cardSaldo.classList = "resumen-card resumen-saldo";
 filaResumen.appendChild(cardSaldo);
@@ -62,20 +62,20 @@ pSaldoValor.classList = "resumen-valor";
 pSaldoValor.innerText = "$0";
 cardSaldo.appendChild(pSaldoValor);
 
-// Card: Ahorros
-const cardAhorros = document.createElement("div");
-cardAhorros.classList = "resumen-card resumen-ahorros";
-filaResumen.appendChild(cardAhorros);
+// Card: Efectivo
+const cardEfectivo = document.createElement("div");
+cardEfectivo.classList = "resumen-card resumen-efectivo";
+filaResumen.appendChild(cardEfectivo);
 
-const pAhoLabel = document.createElement("p");
-pAhoLabel.innerText = "Ahorros";
-cardAhorros.appendChild(pAhoLabel);
+const pEfeLabel = document.createElement("p");
+pEfeLabel.innerText = "Plata en efectivo";
+cardEfectivo.appendChild(pEfeLabel);
 
-const pAhoValor = document.createElement("p");
-pAhoValor.id = "ahorros";
-pAhoValor.classList = "resumen-valor";
-pAhoValor.innerText = "$0";
-cardAhorros.appendChild(pAhoValor);
+const pEfeValor = document.createElement("p");
+pEfeValor.id = "efectivo";
+pEfeValor.classList = "resumen-valor";
+pEfeValor.innerText = "$0";
+cardEfectivo.appendChild(pEfeValor);
 
 // Card: Total
 const cardTotal = document.createElement("div");
@@ -83,7 +83,7 @@ cardTotal.classList = "resumen-card resumen-total";
 filaResumen.appendChild(cardTotal);
 
 const pTotalLabel = document.createElement("p");
-pTotalLabel.innerText = "Total (plata + ahorros)";
+pTotalLabel.innerText = "Total (plata + efectivo)";
 cardTotal.appendChild(pTotalLabel);
 
 const pTotalValor = document.createElement("p");
@@ -92,26 +92,26 @@ pTotalValor.classList = "resumen-valor";
 pTotalValor.innerText = "$0";
 cardTotal.appendChild(pTotalValor);
 
-// ------- Sección AHORROS (nuevo) -------
-const seccionAhorros = document.createElement("section");
-seccionAhorros.classList = "ahorros";
-main.appendChild(seccionAhorros);
+// ------- Sección EFECTIVO (antes AHORROS) -------
+const seccionEfectivo = document.createElement("section");
+seccionEfectivo.classList = "efectivo";
+main.appendChild(seccionEfectivo);
 
-const labelAhorros = document.createElement("label");
-labelAhorros.innerText = "Ingresar ahorros:";
-labelAhorros.htmlFor = "input-ahorros";
-seccionAhorros.appendChild(labelAhorros);
+const labelEfectivo = document.createElement("label");
+labelEfectivo.innerText = "Ingresar plata en efectivo:";
+labelEfectivo.htmlFor = "input-efectivo";
+seccionEfectivo.appendChild(labelEfectivo);
 
-const inputAhorros = document.createElement("input");
-inputAhorros.type = "number";
-inputAhorros.id = "input-ahorros";
-inputAhorros.placeholder = "Ej: 250000";
-inputAhorros.step = "0.01";
-seccionAhorros.appendChild(inputAhorros);
+const inputEfectivo = document.createElement("input");
+inputEfectivo.type = "number";
+inputEfectivo.id = "input-efectivo";
+inputEfectivo.placeholder = "Ej: 250000";
+inputEfectivo.step = "0.01";
+seccionEfectivo.appendChild(inputEfectivo);
 
-const btnGuardarAhorros = document.createElement("button");
-btnGuardarAhorros.innerText = "Guardar ahorros";
-seccionAhorros.appendChild(btnGuardarAhorros);
+const btnGuardarEfectivo = document.createElement("button");
+btnGuardarEfectivo.innerText = "Guardar efectivo";
+seccionEfectivo.appendChild(btnGuardarEfectivo);
 
 // ------- Sección para agregar movimiento -------
 const seccionAgregar = document.createElement("section");
@@ -175,12 +175,12 @@ seccionListas.classList = "listas-meses";
 main.appendChild(seccionListas);
 
 // ================== FUNCIONES ==================
-function actualizarResumen(totalIng, totalGas, ahorros) {
+function actualizarResumen(totalIng, totalGas, efectivo) {
   const saldo = totalIng - totalGas;
-  const total = saldo + (Number(ahorros) || 0);
+  const total = saldo + (Number(efectivo) || 0);
 
   pSaldoValor.innerText = formatMoneda.format(saldo);
-  pAhoValor.innerText   = formatMoneda.format(Number(ahorros) || 0);
+  pEfeValor.innerText   = formatMoneda.format(Number(efectivo) || 0);
   pTotalValor.innerText = formatMoneda.format(total);
 }
 
@@ -260,28 +260,27 @@ function renderMeses(gruposOrdenados) {
   });
 }
 
-// ======== AHORROS API ========
-async function getAhorrosDesdeAPI() {
+// ======== EFECTIVO API (usa los mismos endpoints getAhorros/setAhorros) ========
+async function getEfectivoDesdeAPI() {
   try {
     const resp = await fetch(API_URL + "?modo=getAhorros");
     const data = await resp.json();
-    const ah = Number(data.ahorros) || 0;
-    AHORROS_ACTUALES = ah;
-    inputAhorros.placeholder = `Actual: ${formatMoneda.format(ah)}`;
-    
-    // ⚠️ NO precargamos el input
-    inputAhorros.value = "";
+    const ef = Number(data.ahorros) || 0; // la API sigue devolviendo "ahorros"
+    EFECTIVO_ACTUAL = ef;
 
-    return ah;
+    inputEfectivo.placeholder = `Actual: ${formatMoneda.format(ef)}`;
+    inputEfectivo.value = ""; // no precargar
+
+    return ef;
   } catch (err) {
-    console.error("Error al obtener ahorros", err);
-    AHORROS_ACTUALES = 0;
-    inputAhorros.value = "";
+    console.error("Error al obtener efectivo", err);
+    EFECTIVO_ACTUAL = 0;
+    inputEfectivo.value = "";
     return 0;
   }
 }
 
-async function setAhorrosEnAPI(nuevoValor) {
+async function setEfectivoEnAPI(nuevoValor) {
   const v = Number(nuevoValor);
   if (isNaN(v)) return;
 
@@ -289,18 +288,23 @@ async function setAhorrosEnAPI(nuevoValor) {
   try {
     const resp = await fetch(url);
     const data = await resp.json();
-    AHORROS_ACTUALES = Number(data.ahorros) || v;
-    inputAhorros.value = AHORROS_ACTUALES;
+
+    // la API sigue respondiendo "ahorros"
+    EFECTIVO_ACTUAL = Number(data.ahorros) || v;
+
+    // mantenemos el input vacío (más cómodo para volver a editar)
+    inputEfectivo.value = "";
+    inputEfectivo.placeholder = `Actual: ${formatMoneda.format(EFECTIVO_ACTUAL)}`;
   } catch (err) {
-    console.error("Error al guardar ahorros", err);
+    console.error("Error al guardar efectivo", err);
   }
 }
 
 // Cargar movimientos desde la API
 async function cargarMovimientosDesdeAPI() {
   try {
-    // 1) traer ahorros primero
-    const ahorros = await getAhorrosDesdeAPI();
+    // 1) traer efectivo primero
+    const efectivo = await getEfectivoDesdeAPI();
 
     // 2) traer movimientos
     const resp = await fetch(API_URL); // modo list
@@ -348,8 +352,8 @@ async function cargarMovimientosDesdeAPI() {
       return bKey - aKey;
     });
 
-    // Actualizar resumen general (solo plata actual + ahorros + total)
-    actualizarResumen(totalIngresos, totalGastos, ahorros);
+    // Actualizar resumen general (plata + efectivo + total)
+    actualizarResumen(totalIngresos, totalGastos, efectivo);
 
     // Render de las listas por mes
     renderMeses(gruposOrdenados);
@@ -391,16 +395,15 @@ buttonAgregar.addEventListener("click", () => {
   inputConcepto.focus();
 });
 
-btnGuardarAhorros.addEventListener("click", async () => {
-  await setAhorrosEnAPI(inputAhorros.value);
-  // recalcula el resumen sin depender del orden (vuelve a cargar todo)
+btnGuardarEfectivo.addEventListener("click", async () => {
+  await setEfectivoEnAPI(inputEfectivo.value);
   await cargarMovimientosDesdeAPI();
 });
 
-inputAhorros.addEventListener("keydown", (event) => {
+inputEfectivo.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
-    btnGuardarAhorros.click();
+    btnGuardarEfectivo.click();
   }
 });
 
@@ -420,3 +423,4 @@ inputMonto.addEventListener("keydown", (event) => {
 
 // Cargar al iniciar
 window.addEventListener("load", cargarMovimientosDesdeAPI);
+
