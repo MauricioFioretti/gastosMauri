@@ -1,8 +1,20 @@
 // ================== CONFIG ==================
-const API_URL = "https://script.google.com/macros/s/AKfycbxOUyVMSOPHvGRJXobkftG-tMDZUzDjTw795ao2t1xxTBVOEcqphY7GC3bjc1HrVdxJ/exec"; // <--- tu URL
+const API_URL =
+  "https://script.google.com/macros/s/AKfycbxOUyVMSOPHvGRJXobkftG-tMDZUzDjTw795ao2t1xxTBVOEcqphY7GC3bjc1HrVdxJ/exec";
 
 const TIPO_INGRESO = "ingreso";
-const TIPO_GASTO   = "gasto";
+const TIPO_GASTO = "gasto";
+const TIPO_MOV = "mov"; // mover plata entre tarjeta/efectivo
+
+// Medios (según tipo)
+// ingreso: efectivo | transferencia
+// gasto: efectivo | tarjeta
+// mov: retiro | deposito
+const MEDIO_EFECTIVO = "efectivo";
+const MEDIO_TRANSFERENCIA = "transferencia";
+const MEDIO_TARJETA = "tarjeta";
+const MEDIO_RETIRO = "retiro";     // tarjeta -> efectivo
+const MEDIO_DEPOSITO = "deposito"; // efectivo -> tarjeta
 
 // Formato moneda
 const formatMoneda = new Intl.NumberFormat("es-AR", {
@@ -16,9 +28,6 @@ const MESES_ES = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
 ];
-
-// Estado (para recalcular total)
-let EFECTIVO_ACTUAL = 0;
 
 // ================== HEADER ==================
 const header = document.querySelector("header");
@@ -47,20 +56,20 @@ const filaResumen = document.createElement("div");
 filaResumen.classList = "resumen-fila";
 seccionResumen.appendChild(filaResumen);
 
-// Card: Plata actual (saldo)
-const cardSaldo = document.createElement("div");
-cardSaldo.classList = "resumen-card resumen-saldo";
-filaResumen.appendChild(cardSaldo);
+// Card: Tarjeta
+const cardTarjeta = document.createElement("div");
+cardTarjeta.classList = "resumen-card resumen-tarjeta";
+filaResumen.appendChild(cardTarjeta);
 
-const pSaldoLabel = document.createElement("p");
-pSaldoLabel.innerText = "Plata actual";
-cardSaldo.appendChild(pSaldoLabel);
+const pTarLabel = document.createElement("p");
+pTarLabel.innerText = "Plata en tarjeta";
+cardTarjeta.appendChild(pTarLabel);
 
-const pSaldoValor = document.createElement("p");
-pSaldoValor.id = "saldo-actual";
-pSaldoValor.classList = "resumen-valor";
-pSaldoValor.innerText = "$0";
-cardSaldo.appendChild(pSaldoValor);
+const pTarValor = document.createElement("p");
+pTarValor.id = "tarjeta";
+pTarValor.classList = "resumen-valor";
+pTarValor.innerText = "$0";
+cardTarjeta.appendChild(pTarValor);
 
 // Card: Efectivo
 const cardEfectivo = document.createElement("div");
@@ -83,7 +92,7 @@ cardTotal.classList = "resumen-card resumen-total";
 filaResumen.appendChild(cardTotal);
 
 const pTotalLabel = document.createElement("p");
-pTotalLabel.innerText = "Total (plata + efectivo)";
+pTotalLabel.innerText = "Total";
 cardTotal.appendChild(pTotalLabel);
 
 const pTotalValor = document.createElement("p");
@@ -92,31 +101,15 @@ pTotalValor.classList = "resumen-valor";
 pTotalValor.innerText = "$0";
 cardTotal.appendChild(pTotalValor);
 
-// ------- Sección EFECTIVO (antes AHORROS) -------
-const seccionEfectivo = document.createElement("section");
-seccionEfectivo.classList = "efectivo";
-main.appendChild(seccionEfectivo);
-
-const labelEfectivo = document.createElement("label");
-labelEfectivo.innerText = "Ingresar plata en efectivo:";
-labelEfectivo.htmlFor = "input-efectivo";
-seccionEfectivo.appendChild(labelEfectivo);
-
-const inputEfectivo = document.createElement("input");
-inputEfectivo.type = "number";
-inputEfectivo.id = "input-efectivo";
-inputEfectivo.placeholder = "Ej: 250000";
-inputEfectivo.step = "0.01";
-seccionEfectivo.appendChild(inputEfectivo);
-
-const btnGuardarEfectivo = document.createElement("button");
-btnGuardarEfectivo.innerText = "Guardar efectivo";
-seccionEfectivo.appendChild(btnGuardarEfectivo);
-
-// ------- Sección para agregar movimiento -------
+// ------- Sección AGREGAR MOVIMIENTO (ingreso/gasto) -------
 const seccionAgregar = document.createElement("section");
 seccionAgregar.classList = "agregarMovimiento";
 main.appendChild(seccionAgregar);
+
+const tituloAgregar = document.createElement("h2");
+tituloAgregar.classList = "bloque-titulo";
+tituloAgregar.innerText = "Agregar ingreso / gasto";
+seccionAgregar.appendChild(tituloAgregar);
 
 // Concepto
 const labelConcepto = document.createElement("label");
@@ -164,10 +157,61 @@ selectTipo.appendChild(optGasto);
 
 seccionAgregar.appendChild(selectTipo);
 
-// Botón
+// Medio (dinámico según tipo)
+const labelMedio = document.createElement("label");
+labelMedio.innerText = "Medio:";
+labelMedio.htmlFor = "select-medio";
+seccionAgregar.appendChild(labelMedio);
+
+const selectMedio = document.createElement("select");
+selectMedio.id = "select-medio";
+seccionAgregar.appendChild(selectMedio);
+
+// Botón Agregar
 const buttonAgregar = document.createElement("button");
 buttonAgregar.innerText = "Agregar movimiento";
 seccionAgregar.appendChild(buttonAgregar);
+
+// ------- Sección MOVER PLATA (aparte) -------
+const seccionMover = document.createElement("section");
+seccionMover.classList = "moverPlata";
+main.appendChild(seccionMover);
+
+const tituloMover = document.createElement("h2");
+tituloMover.classList = "bloque-titulo";
+tituloMover.innerText = "Mover plata";
+seccionMover.appendChild(tituloMover);
+
+const pMover = document.createElement("p");
+pMover.classList = "mover-ayuda";
+pMover.innerText = "Usá esto cuando pasás plata entre tarjeta y efectivo (no es ingreso ni gasto).";
+seccionMover.appendChild(pMover);
+
+const labelMoverMonto = document.createElement("label");
+labelMoverMonto.innerText = "Monto:";
+labelMoverMonto.htmlFor = "input-mover-monto";
+seccionMover.appendChild(labelMoverMonto);
+
+const inputMoverMonto = document.createElement("input");
+inputMoverMonto.type = "number";
+inputMoverMonto.id = "input-mover-monto";
+inputMoverMonto.placeholder = "Ej: 50000";
+inputMoverMonto.step = "0.01";
+seccionMover.appendChild(inputMoverMonto);
+
+const filaMoverBtns = document.createElement("div");
+filaMoverBtns.classList = "mover-botones";
+seccionMover.appendChild(filaMoverBtns);
+
+const btnRetirar = document.createElement("button");
+btnRetirar.classList = "btn-retiro";
+btnRetirar.innerText = "Retirar (Tarjeta → Efectivo)";
+filaMoverBtns.appendChild(btnRetirar);
+
+const btnDepositar = document.createElement("button");
+btnDepositar.classList = "btn-deposito";
+btnDepositar.innerText = "Depositar (Efectivo → Tarjeta)";
+filaMoverBtns.appendChild(btnDepositar);
 
 // ------- Sección listas por mes -------
 const seccionListas = document.createElement("section");
@@ -175,25 +219,106 @@ seccionListas.classList = "listas-meses";
 main.appendChild(seccionListas);
 
 // ================== FUNCIONES ==================
-function actualizarResumen(totalIng, totalGas, efectivo) {
-  const saldo = totalIng - totalGas;
-  const total = saldo + (Number(efectivo) || 0);
+function setOpcionesMedio() {
+  const tipo = (selectTipo.value || "").toLowerCase();
+  selectMedio.innerHTML = "";
 
-  pSaldoValor.innerText = formatMoneda.format(saldo);
-  pEfeValor.innerText   = formatMoneda.format(Number(efectivo) || 0);
+  if (tipo === TIPO_INGRESO) {
+    const o1 = document.createElement("option");
+    o1.value = MEDIO_EFECTIVO;
+    o1.innerText = "Efectivo";
+    selectMedio.appendChild(o1);
+
+    const o2 = document.createElement("option");
+    o2.value = MEDIO_TRANSFERENCIA;
+    o2.innerText = "Transferencia";
+    selectMedio.appendChild(o2);
+
+    selectMedio.value = MEDIO_TRANSFERENCIA; // default cómodo
+  } else {
+    // gasto
+    const o1 = document.createElement("option");
+    o1.value = MEDIO_EFECTIVO;
+    o1.innerText = "Efectivo";
+    selectMedio.appendChild(o1);
+
+    const o2 = document.createElement("option");
+    o2.value = MEDIO_TARJETA;
+    o2.innerText = "Tarjeta";
+    selectMedio.appendChild(o2);
+
+    selectMedio.value = MEDIO_TARJETA; // default cómodo
+  }
+}
+
+function actualizarResumen(saldoTarjeta, saldoEfectivo) {
+  const total = (Number(saldoTarjeta) || 0) + (Number(saldoEfectivo) || 0);
+  pTarValor.innerText = formatMoneda.format(Number(saldoTarjeta) || 0);
+  pEfeValor.innerText = formatMoneda.format(Number(saldoEfectivo) || 0);
   pTotalValor.innerText = formatMoneda.format(total);
+}
+
+function medioLabel(tipo, medio) {
+  tipo = (tipo || "").toLowerCase();
+  medio = (medio || "").toLowerCase();
+
+  if (tipo === TIPO_INGRESO) {
+    if (medio === MEDIO_EFECTIVO) return "Efectivo";
+    return "Transferencia";
+  }
+  if (tipo === TIPO_GASTO) {
+    if (medio === MEDIO_EFECTIVO) return "Efectivo";
+    return "Tarjeta";
+  }
+  if (tipo === TIPO_MOV) {
+    if (medio === MEDIO_RETIRO) return "Tarjeta → Efectivo";
+    return "Efectivo → Tarjeta";
+  }
+  return medio || "";
+}
+
+function aplicarASaldos(mov, saldos) {
+  const tipo = (mov.tipo || "").toLowerCase();
+  const medio = (mov.medio || "").toLowerCase();
+  const monto = Number(mov.monto) || 0;
+
+  if (monto === 0) return;
+
+  // ingreso
+  if (tipo === TIPO_INGRESO) {
+    if (medio === MEDIO_EFECTIVO) saldos.efectivo += monto;
+    else saldos.tarjeta += monto; // transferencia -> tarjeta
+    return;
+  }
+
+  // gasto
+  if (tipo === TIPO_GASTO) {
+    if (medio === MEDIO_EFECTIVO) saldos.efectivo -= monto;
+    else saldos.tarjeta -= monto; // tarjeta
+    return;
+  }
+
+  // mover
+  if (tipo === TIPO_MOV) {
+    if (medio === MEDIO_RETIRO) {
+      saldos.tarjeta -= monto;
+      saldos.efectivo += monto;
+    } else if (medio === MEDIO_DEPOSITO) {
+      saldos.efectivo -= monto;
+      saldos.tarjeta += monto;
+    }
+  }
 }
 
 // Render de los grupos por mes
 function renderMeses(gruposOrdenados) {
   seccionListas.innerHTML = "";
 
-  gruposOrdenados.forEach((grupo, indice) => {
+  gruposOrdenados.forEach((grupo) => {
     const { year, monthIndex, movimientos, totalIngresos, totalGastos } = grupo;
 
     const contMes = document.createElement("section");
     contMes.classList = "grupo-mes";
-    contMes.dataset.index = indice;
     seccionListas.appendChild(contMes);
 
     const tituloMes = document.createElement("h2");
@@ -206,7 +331,8 @@ function renderMeses(gruposOrdenados) {
     subResumen.innerText =
       `Ingresos: ${formatMoneda.format(totalIngresos)} · ` +
       `Gastos: ${formatMoneda.format(totalGastos)} · ` +
-      `Saldo del mes: ${formatMoneda.format(saldoMes)}`;
+      `Saldo del mes: ${formatMoneda.format(saldoMes)} ` +
+      `(sin contar movimientos de caja)`;
     contMes.appendChild(subResumen);
 
     const listaMov = document.createElement("div");
@@ -214,8 +340,13 @@ function renderMeses(gruposOrdenados) {
     contMes.appendChild(listaMov);
 
     movimientos.forEach((mov) => {
+      const tipo = (mov.tipo || "").toLowerCase();
+      const medio = (mov.medio || "").toLowerCase();
+      const m = Number(mov.monto) || 0;
+
       const card = document.createElement("article");
       card.classList.add("mov-card");
+      if (tipo === TIPO_MOV) card.classList.add("mov-caja");
 
       const fila1 = document.createElement("div");
       fila1.classList = "mov-fila-1";
@@ -225,13 +356,20 @@ function renderMeses(gruposOrdenados) {
       concepto.innerText = mov.concepto || "(sin concepto)";
       fila1.appendChild(concepto);
 
-      const monto = document.createElement("p");
-      monto.classList = "mov-monto";
-      const esIngreso = (mov.tipo || "").toLowerCase() === TIPO_INGRESO;
-      const signo = esIngreso ? "+" : "-";
-      monto.innerText = `${signo} ${formatMoneda.format(mov.monto || 0)}`;
-      monto.dataset.tipo = esIngreso ? "ingreso" : "gasto";
-      fila1.appendChild(monto);
+      const montoEl = document.createElement("p");
+      montoEl.classList = "mov-monto";
+
+      if (tipo === TIPO_INGRESO) {
+        montoEl.innerText = `+ ${formatMoneda.format(m)}`;
+        montoEl.dataset.tipo = "ingreso";
+      } else if (tipo === TIPO_GASTO) {
+        montoEl.innerText = `- ${formatMoneda.format(m)}`;
+        montoEl.dataset.tipo = "gasto";
+      } else {
+        montoEl.innerText = `⇄ ${formatMoneda.format(m)}`;
+        montoEl.dataset.tipo = "caja";
+      }
+      fila1.appendChild(montoEl);
 
       const fila2 = document.createElement("div");
       fila2.classList = "mov-fila-2";
@@ -249,85 +387,50 @@ function renderMeses(gruposOrdenados) {
         fila2.appendChild(pFecha);
       }
 
-      const pillTipo = document.createElement("span");
-      pillTipo.classList = "mov-tipo";
-      pillTipo.innerText = esIngreso ? "Ingreso" : "Gasto";
-      pillTipo.dataset.tipo = esIngreso ? "ingreso" : "gasto";
-      fila2.appendChild(pillTipo);
+      const extra = document.createElement("span");
+      extra.classList = "mov-extra";
+      extra.innerText = medioLabel(tipo, medio);
+      fila2.appendChild(extra);
 
+      const pill = document.createElement("span");
+      pill.classList = "mov-tipo";
+
+      if (tipo === TIPO_INGRESO) {
+        pill.innerText = "Ingreso";
+        pill.dataset.tipo = "ingreso";
+      } else if (tipo === TIPO_GASTO) {
+        pill.innerText = "Gasto";
+        pill.dataset.tipo = "gasto";
+      } else {
+        pill.innerText = "Caja";
+        pill.dataset.tipo = "caja";
+      }
+
+      fila2.appendChild(pill);
       listaMov.appendChild(card);
     });
   });
 }
 
-// ======== EFECTIVO API (usa los mismos endpoints getAhorros/setAhorros) ========
-async function getEfectivoDesdeAPI() {
-  try {
-    const resp = await fetch(API_URL + "?modo=getAhorros");
-    const data = await resp.json();
-    const ef = Number(data.ahorros) || 0; // la API sigue devolviendo "ahorros"
-    EFECTIVO_ACTUAL = ef;
-
-    inputEfectivo.placeholder = `Actual: ${formatMoneda.format(ef)}`;
-    inputEfectivo.value = ""; // no precargar
-
-    return ef;
-  } catch (err) {
-    console.error("Error al obtener efectivo", err);
-    EFECTIVO_ACTUAL = 0;
-    inputEfectivo.value = "";
-    return 0;
-  }
-}
-
-async function setEfectivoEnAPI(nuevoValor) {
-  const v = Number(nuevoValor);
-  if (isNaN(v)) return;
-
-  const url = API_URL + "?modo=setAhorros&ahorros=" + encodeURIComponent(String(v));
-  try {
-    const resp = await fetch(url);
-    const data = await resp.json();
-
-    // la API sigue respondiendo "ahorros"
-    EFECTIVO_ACTUAL = Number(data.ahorros) || v;
-
-    // mantenemos el input vacío (más cómodo para volver a editar)
-    inputEfectivo.value = "";
-    inputEfectivo.placeholder = `Actual: ${formatMoneda.format(EFECTIVO_ACTUAL)}`;
-  } catch (err) {
-    console.error("Error al guardar efectivo", err);
-  }
-}
-
 // Cargar movimientos desde la API
 async function cargarMovimientosDesdeAPI() {
   try {
-    // 1) traer efectivo primero
-    const efectivo = await getEfectivoDesdeAPI();
-
-    // 2) traer movimientos
     const resp = await fetch(API_URL); // modo list
     const movimientos = await resp.json();
 
-    let totalIngresos = 0;
-    let totalGastos = 0;
+    const saldos = { tarjeta: 0, efectivo: 0 };
 
     // Agrupar por mes
     const grupos = {}; // key: "YYYY-MM"
 
     movimientos.forEach((mov) => {
-      const tipo = (mov.tipo || "").toLowerCase();
-      const monto = Number(mov.monto) || 0;
-
-      if (tipo === TIPO_INGRESO) totalIngresos += monto;
-      else if (tipo === TIPO_GASTO) totalGastos += monto;
+      aplicarASaldos(mov, saldos);
 
       const fecha = mov.timestamp ? new Date(mov.timestamp) : null;
       if (!fecha) return;
 
       const year = fecha.getFullYear();
-      const monthIndex = fecha.getMonth(); // 0-11
+      const monthIndex = fecha.getMonth();
       const key = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
 
       if (!grupos[key]) {
@@ -341,42 +444,53 @@ async function cargarMovimientosDesdeAPI() {
       }
 
       grupos[key].movimientos.push(mov);
+
+      // Totales del mes (sin caja)
+      const tipo = (mov.tipo || "").toLowerCase();
+      const monto = Number(mov.monto) || 0;
       if (tipo === TIPO_INGRESO) grupos[key].totalIngresos += monto;
       else if (tipo === TIPO_GASTO) grupos[key].totalGastos += monto;
     });
 
-    // Ordenar meses por fecha (más nuevo primero)
     const gruposOrdenados = Object.values(grupos).sort((a, b) => {
       const aKey = a.year * 100 + a.monthIndex;
       const bKey = b.year * 100 + b.monthIndex;
       return bKey - aKey;
     });
 
-    // Actualizar resumen general (plata + efectivo + total)
-    actualizarResumen(totalIngresos, totalGastos, efectivo);
-
-    // Render de las listas por mes
+    actualizarResumen(saldos.tarjeta, saldos.efectivo);
     renderMeses(gruposOrdenados);
-
   } catch (err) {
     console.error("Error al cargar movimientos", err);
   }
 }
 
-// Agregar nuevo movimiento
-async function agregarMovimientoAPI(concepto, monto, tipo) {
+// Agregar ingreso/gasto
+async function agregarMovimientoAPI(concepto, monto, tipo, medio) {
   const conceptoLimpio = (concepto || "").trim();
-  const montoLimpio = (monto || "").toString().trim();
-  const tipoLimpio = (tipo || "").trim();
+  const tipoLimpio = (tipo || "").trim().toLowerCase();
+  const medioLimpio = (medio || "").trim().toLowerCase();
+  const montoNum = Number(monto);
 
-  if (!conceptoLimpio || !montoLimpio || !tipoLimpio) return;
+  if (!conceptoLimpio || !tipoLimpio || isNaN(montoNum) || montoNum <= 0) return;
 
-  const url =
-    API_URL +
-    "?modo=add" +
-    "&concepto=" + encodeURIComponent(conceptoLimpio) +
-    "&monto=" + encodeURIComponent(montoLimpio) +
-    "&tipo=" + encodeURIComponent(tipoLimpio);
+  // Validar medios permitidos
+  if (tipoLimpio === TIPO_INGRESO) {
+    if (![MEDIO_EFECTIVO, MEDIO_TRANSFERENCIA].includes(medioLimpio)) return;
+  } else if (tipoLimpio === TIPO_GASTO) {
+    if (![MEDIO_EFECTIVO, MEDIO_TARJETA].includes(medioLimpio)) return;
+  } else {
+    return;
+  }
+
+  const params = new URLSearchParams();
+  params.set("modo", "add");
+  params.set("concepto", conceptoLimpio);
+  params.set("monto", String(montoNum));
+  params.set("tipo", tipoLimpio);
+  params.set("medio", medioLimpio);
+
+  const url = API_URL + "?" + params.toString();
 
   try {
     await fetch(url);
@@ -386,27 +500,59 @@ async function agregarMovimientoAPI(concepto, monto, tipo) {
   }
 }
 
+// Mover plata (caja)
+async function moverPlataAPI(monto, modoCaja) {
+  const montoNum = Number(monto);
+  const medio = (modoCaja || "").toLowerCase();
+
+  if (isNaN(montoNum) || montoNum <= 0) return;
+  if (![MEDIO_RETIRO, MEDIO_DEPOSITO].includes(medio)) return;
+
+  const concepto = medio === MEDIO_RETIRO ? "Retiro" : "Depósito";
+
+  const params = new URLSearchParams();
+  params.set("modo", "add");
+  params.set("concepto", concepto);
+  params.set("monto", String(montoNum));
+  params.set("tipo", TIPO_MOV);
+  params.set("medio", medio);
+
+  const url = API_URL + "?" + params.toString();
+
+  try {
+    await fetch(url);
+    await cargarMovimientosDesdeAPI();
+  } catch (err) {
+    console.error("Error al mover plata", err);
+  }
+}
+
 // ================== EVENTOS ==================
+selectTipo.addEventListener("change", () => {
+  setOpcionesMedio();
+});
+
 buttonAgregar.addEventListener("click", () => {
-  agregarMovimientoAPI(inputConcepto.value, inputMonto.value, selectTipo.value);
+  agregarMovimientoAPI(inputConcepto.value, inputMonto.value, selectTipo.value, selectMedio.value);
+
   inputConcepto.value = "";
   inputMonto.value = "";
   selectTipo.value = TIPO_GASTO;
+  setOpcionesMedio();
   inputConcepto.focus();
 });
 
-btnGuardarEfectivo.addEventListener("click", async () => {
-  await setEfectivoEnAPI(inputEfectivo.value);
-  await cargarMovimientosDesdeAPI();
+btnRetirar.addEventListener("click", () => {
+  moverPlataAPI(inputMoverMonto.value, MEDIO_RETIRO);
+  inputMoverMonto.value = "";
 });
 
-inputEfectivo.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
-    event.preventDefault();
-    btnGuardarEfectivo.click();
-  }
+btnDepositar.addEventListener("click", () => {
+  moverPlataAPI(inputMoverMonto.value, MEDIO_DEPOSITO);
+  inputMoverMonto.value = "";
 });
 
+// ENTERs cómodos
 inputConcepto.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
@@ -421,6 +567,16 @@ inputMonto.addEventListener("keydown", (event) => {
   }
 });
 
-// Cargar al iniciar
-window.addEventListener("load", cargarMovimientosDesdeAPI);
+inputMoverMonto.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    // por default, Enter hace "Depositar" (podés cambiarlo)
+    btnDepositar.click();
+  }
+});
 
+// Cargar al iniciar
+window.addEventListener("load", () => {
+  setOpcionesMedio();
+  cargarMovimientosDesdeAPI();
+});
