@@ -29,28 +29,40 @@ body {
 }
 
 /* ======= HEADER / TÍTULO ======= */
-.titulo {
-  margin-bottom: 1.8rem;
-  display: flex;
-  align-items: baseline;
-  gap: 0.6rem;
-}
 
-/* ======= HEADER ROWS + OAUTH UI ======= */
+/* Contenedor del header (columna) */
 .titulo{
+  margin-bottom: 1.8rem;
+  display:flex;
   flex-direction: column;
   align-items: stretch;
   gap: .55rem;
 }
 
+/* Fila 1 (título) */
 .header-row{
   display:flex;
   align-items:center;
   gap: .8rem;
 }
 
-.header-row-1{ justify-content:flex-start; }
+.header-row-1{
+  justify-content:flex-start;
+  gap: .6rem;
+}
 
+/* ✅ La barrita va en la fila del título (no en el contenedor) */
+.header-row-1::before{
+  content: "";
+  width: 6px;
+  height: 32px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ff6b6b, #4cc9f0);
+  box-shadow: 0 0 12px rgba(76, 201, 240, 0.7);
+  flex: 0 0 auto;
+}
+
+/* Fila 2 (sync + acciones + cuenta) */
 .header-row-2{
   justify-content:space-between;
   flex-wrap:wrap;
@@ -132,16 +144,10 @@ body {
   .account-pill{ max-width:100%; }
 }
 
-.titulo::before {
-  content: "";
-  width: 6px;
-  height: 32px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, #ff6b6b, #4cc9f0);
-  box-shadow: 0 0 12px rgba(76, 201, 240, 0.7);
-}
-
-.titulo h1 {
+/* Título */
+.titulo h1{
+  margin: 0;                 /* ✅ evita que el H1 empuje todo */
+  line-height: 1.05;         /* ✅ más compacto arriba */
   font-family: "Bebas Neue", system-ui, sans-serif;
   color: #fff;
   font-size: 2.6rem;
