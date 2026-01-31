@@ -2,6 +2,246 @@
 const API_URL =
   "https://script.google.com/macros/s/AKfycbxOUyVMSOPHvGRJXobkftG-tMDZUzDjTw795ao2t1xxTBVOEcqphY7GC3bjc1HrVdxJ/exec";
 
+// =====================
+// CONFIG OAUTH (GIS)
+// =====================
+// IMPORTANTE: Client ID del proyecto OAuth (external, test users restringidos)
+const OAUTH_CLIENT_ID = "839738936173-i2bit146ca9n3m8ad7gp2t062sl8q9q1.apps.googleusercontent.com";
+
+// Scope mínimo “igual que tu modelo”: drive.metadata.readonly
+const OAUTH_SCOPES = [
+  "openid",
+  "email",
+  "profile",
+  "https://www.googleapis.com/auth/userinfo.email",
+  "https://www.googleapis.com/auth/userinfo.profile",
+  "https://www.googleapis.com/auth/drive.metadata.readonly"
+].join(" ");
+
+// LocalStorage OAuth
+const LS_OAUTH = "gastos_oauth_token_v1";        // {access_token, expires_at}
+const LS_OAUTH_EMAIL = "gastos_oauth_email_v1";  // email para hint
+
+// =====================
+// OAuth state
+// =====================
+let tokenClient = null;
+let oauthAccessToken = "";
+let oauthExpiresAt = 0;
+
+// Connection lock (evita carreras)
+let connectInFlight = null;
+function isConnectBusy() { return !!connectInFlight; }
+
+// =====================
+// Helpers
+// =====================
+function isOnline() { return navigator.onLine !== false; }
+
+function isTokenValid() {
+  return !!oauthAccessToken && Date.now() < (oauthExpiresAt - 10_000);
+}
+
+function loadStoredOAuth() {
+  try {
+    const raw = localStorage.getItem(LS_OAUTH);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (!parsed?.access_token || !parsed?.expires_at) return null;
+    return { access_token: parsed.access_token, expires_at: Number(parsed.expires_at) };
+  } catch { return null; }
+}
+function saveStoredOAuth(access_token, expires_at) {
+  try { localStorage.setItem(LS_OAUTH, JSON.stringify({ access_token, expires_at })); } catch {}
+}
+function clearStoredOAuth() {
+  try { localStorage.removeItem(LS_OAUTH); } catch {}
+}
+
+function loadStoredOAuthEmail() {
+  try { return String(localStorage.getItem(LS_OAUTH_EMAIL) || "").trim().toLowerCase(); }
+  catch { return ""; }
+}
+function saveStoredOAuthEmail(email) {
+  try { localStorage.setItem(LS_OAUTH_EMAIL, (email || "").toString()); } catch {}
+}
+function clearStoredOAuthEmail() {
+  try { localStorage.removeItem(LS_OAUTH_EMAIL); } catch {}
+}
+
+async function fetchUserEmailFromToken(accessToken) {
+  const r = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  if (!r.ok) throw new Error("No se pudo obtener userinfo");
+  const data = await r.json();
+  return (data?.email || "").toString();
+}
+
+function initOAuth() {
+  if (!window.google?.accounts?.oauth2?.initTokenClient) {
+    throw new Error("GIS no está cargado (falta gsi/client en HTML)");
+  }
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: OAUTH_CLIENT_ID,
+    scope: OAUTH_SCOPES,
+    include_granted_scopes: true,
+    use_fedcm_for_prompt: true,
+    callback: () => {}
+  });
+}
+
+// prompt: "" (silent), "consent", "select_account"
+function requestAccessToken({ prompt, hint } = {}) {
+  return new Promise((resolve, reject) => {
+    if (!tokenClient) return reject(new Error("OAuth no inicializado"));
+
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      reject(new Error("popup_timeout_or_closed"));
+    }, 45_000);
+
+    tokenClient.callback = (resp) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+
+      if (!resp || resp.error) {
+        const err = String(resp?.error || "oauth_error");
+        const sub = String(resp?.error_subtype || "");
+        const msg = (err + (sub ? `:${sub}` : "")).toLowerCase();
+
+        const e = new Error(err);
+        e.isCanceled =
+          msg.includes("popup_closed") ||
+          msg.includes("popup_closed_by_user") ||
+          msg.includes("access_denied") ||
+          msg.includes("user_cancel") ||
+          msg.includes("interaction_required");
+
+        return reject(e);
+      }
+
+      const accessToken = resp.access_token;
+      const expiresIn = Number(resp.expires_in || 3600);
+      const expiresAt = Date.now() + (expiresIn * 1000);
+
+      oauthAccessToken = accessToken;
+      oauthExpiresAt = expiresAt;
+      saveStoredOAuth(accessToken, expiresAt);
+
+      resolve({ access_token: accessToken, expires_at: expiresAt });
+    };
+
+    const req = {};
+    if (prompt !== undefined) req.prompt = prompt;
+    if (hint && String(hint).includes("@")) req.hint = hint;
+
+    try { tokenClient.requestAccessToken(req); }
+    catch (e) { clearTimeout(timer); reject(e); }
+  });
+}
+
+// allowInteractive=false => NO popup
+async function ensureOAuthToken(allowInteractive = false, interactivePrompt = "consent") {
+  // 1) token runtime
+  if (isTokenValid()) return oauthAccessToken;
+
+  // 2) token guardado
+  const stored = loadStoredOAuth();
+  if (stored?.access_token && stored?.expires_at && Date.now() < (stored.expires_at - 10_000)) {
+    oauthAccessToken = stored.access_token;
+    oauthExpiresAt = Number(stored.expires_at);
+    return oauthAccessToken;
+  }
+
+  const hintEmail = (loadStoredOAuthEmail() || "").trim().toLowerCase();
+
+  // Corte anti-loop: si no es interactivo y no tengo hint, no llamar GIS
+  if (!allowInteractive && !hintEmail) throw new Error("TOKEN_NEEDS_INTERACTIVE");
+
+  // 3) silent real
+  try {
+    await requestAccessToken({ prompt: "", hint: hintEmail || undefined });
+    if (isTokenValid()) return oauthAccessToken;
+  } catch {
+    if (!allowInteractive) throw new Error("TOKEN_NEEDS_INTERACTIVE");
+  }
+
+  // 4) interactivo
+  await requestAccessToken({ prompt: interactivePrompt ?? "consent", hint: hintEmail || undefined });
+  if (!isTokenValid()) throw new Error("TOKEN_NEEDS_INTERACTIVE");
+  return oauthAccessToken;
+}
+
+async function forceSwitchAccount() {
+  clearStoredOAuth();
+  clearStoredOAuthEmail();
+  oauthAccessToken = "";
+  oauthExpiresAt = 0;
+  await ensureOAuthToken(true, "select_account");
+}
+
+// =====================
+// API client (POST text/plain + JSON body)
+// =====================
+async function apiPost_(payload) {
+  let r, text;
+
+  try {
+    r = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(payload || {}),
+      cache: "no-store",
+      redirect: "follow"
+    });
+  } catch (e) {
+    return { ok: false, error: "network_error", detail: String(e?.message || e) };
+  }
+
+  try { text = await r.text(); }
+  catch (e) { return { ok: false, error: "read_error", status: r.status, detail: String(e?.message || e) }; }
+
+  if (!r.ok) {
+    return { ok: false, error: "http_error", status: r.status, detail: (text || "").slice(0, 800) };
+  }
+
+  try { return JSON.parse(text); }
+  catch { return { ok: false, error: "non_json", status: r.status, detail: (text || "").slice(0, 800) }; }
+}
+
+async function apiCall(mode, payload = {}, opts = {}) {
+  const allowInteractive = !!opts.allowInteractive;
+
+  // asegurar token
+  const token = await ensureOAuthToken(allowInteractive, opts.interactivePrompt || "consent");
+
+  // POST único
+  let data = await apiPost_({ mode, access_token: token, ...(payload || {}) });
+
+  // retry si falta scope/auth
+  if (!data?.ok && (data?.error === "missing_scope" || data?.error === "auth_required")) {
+    const token2 = await ensureOAuthToken(true, "consent");
+    data = await apiPost_({ mode, access_token: token2, ...(payload || {}) });
+  }
+
+  // 🔥 DEBUG FUERTE: si backend devuelve error, lo mostramos completo
+  if (!data?.ok) {
+    console.error("[apiCall] mode:", mode, "payload:", payload, "resp:", data);
+  }
+
+  return data || { ok: false, error: "empty_response" };
+}
+
+async function verifyBackendAccessOrThrow(allowInteractive) {
+  const data = await apiCall("whoami", {}, { allowInteractive });
+  if (!data?.ok) throw new Error((data?.error || "no_access") + (data?.detail ? ` | ${data.detail}` : ""));
+  return data;
+}
+
+
 const TIPO_INGRESO = "ingreso";
 const TIPO_GASTO = "gasto";
 const TIPO_MOV = "mov"; // mover plata entre tarjeta/efectivo
@@ -36,9 +276,71 @@ const seccionTitulo = document.createElement("section");
 seccionTitulo.classList = "titulo";
 header.appendChild(seccionTitulo);
 
+// fila 1: título
+const headerRow1 = document.createElement("div");
+headerRow1.className = "header-row header-row-1";
+seccionTitulo.appendChild(headerRow1);
+
 const h1 = document.createElement("h1");
 h1.innerText = "Gastos Mauri";
-seccionTitulo.appendChild(h1);
+headerRow1.appendChild(h1);
+
+// fila 2: pill sync + acciones + cuenta
+const headerRow2 = document.createElement("div");
+headerRow2.className = "header-row header-row-2";
+seccionTitulo.appendChild(headerRow2);
+
+const syncPill = document.createElement("div");
+syncPill.className = "sync-pill";
+syncPill.innerHTML = `<span class="sync-dot"></span><span class="sync-text">Cargando…</span>`;
+headerRow2.appendChild(syncPill);
+
+const headerActions = document.createElement("div");
+headerActions.className = "header-actions";
+headerRow2.appendChild(headerActions);
+
+const btnConnect = document.createElement("button");
+btnConnect.className = "btn-connect";
+btnConnect.type = "button";
+btnConnect.textContent = "Conectar";
+btnConnect.dataset.mode = "connect"; // connect | switch
+headerActions.appendChild(btnConnect);
+
+const btnRefresh = document.createElement("button");
+btnRefresh.className = "btn-refresh";
+btnRefresh.type = "button";
+btnRefresh.textContent = "↻";
+btnRefresh.title = "Reintentar conexión";
+btnRefresh.style.display = "none";
+headerActions.appendChild(btnRefresh);
+
+const accountPill = document.createElement("div");
+accountPill.className = "account-pill";
+accountPill.style.display = "none";
+headerRow2.appendChild(accountPill);
+
+function setSync(state, text) {
+  syncPill.classList.remove("ok", "saving", "offline");
+  if (state) syncPill.classList.add(state);
+  syncPill.querySelector(".sync-text").textContent = text;
+}
+
+function setAccountUI(email) {
+  const e = (email || "").toString().trim().toLowerCase();
+
+  if (!e) {
+    accountPill.style.display = "none";
+    accountPill.textContent = "";
+    btnConnect.textContent = "Conectar";
+    btnConnect.dataset.mode = "connect";
+    return;
+  }
+
+  accountPill.style.display = "inline-flex";
+  accountPill.textContent = e;
+  btnConnect.textContent = "Cambiar cuenta";
+  btnConnect.dataset.mode = "switch";
+}
 
 // ================== MAIN ==================
 const main = document.querySelector("main");
@@ -412,26 +714,46 @@ function renderMeses(gruposOrdenados) {
   });
 }
 
-// Cargar movimientos desde la API
-async function cargarMovimientosDesdeAPI() {
+async function cargarMovimientosDesdeAPI({ allowInteractive = false } = {}) {
+  if (!isOnline()) {
+    setSync("offline", "Sin conexión");
+    return;
+  }
+
   try {
-    const resp = await fetch(API_URL); // modo list
-    const movimientos = await resp.json();
+    setSync("saving", "Cargando…");
+
+    // 🔑 OJO: mode = "get" (no "list")
+    const resp = await apiCall("get", {}, { allowInteractive });
+
+    if (!resp?.ok) {
+      if (resp?.error === "auth_required") {
+        setSync("offline", "Necesita Conectar");
+        btnRefresh.style.display = "inline-block";
+        return;
+      }
+      throw new Error(resp?.error || "get_failed");
+    }
+
+    // 🔐 guardar email como hint
+    if (resp.email) {
+      saveStoredOAuthEmail(resp.email);
+      setAccountUI(resp.email);
+    }
+
+    const movimientos = Array.isArray(resp.movimientos) ? resp.movimientos : [];
 
     const saldos = { tarjeta: 0, efectivo: 0 };
 
-    // Agrupar por mes
-    const grupos = {}; // key: "YYYY-MM"
-
+    const grupos = {};
     movimientos.forEach((mov) => {
       aplicarASaldos(mov, saldos);
 
-      const fecha = mov.timestamp ? new Date(mov.timestamp) : null;
-      if (!fecha) return;
-
+      if (!mov.timestamp) return;
+      const fecha = new Date(mov.timestamp);
       const year = fecha.getFullYear();
       const monthIndex = fecha.getMonth();
-      const key = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+      const key = `${year}-${monthIndex}`;
 
       if (!grupos[key]) {
         grupos[key] = {
@@ -445,27 +767,26 @@ async function cargarMovimientosDesdeAPI() {
 
       grupos[key].movimientos.push(mov);
 
-      // Totales del mes (sin caja)
-      const tipo = (mov.tipo || "").toLowerCase();
-      const monto = Number(mov.monto) || 0;
-      if (tipo === TIPO_INGRESO) grupos[key].totalIngresos += monto;
-      else if (tipo === TIPO_GASTO) grupos[key].totalGastos += monto;
+      if (mov.tipo === "ingreso") grupos[key].totalIngresos += Number(mov.monto) || 0;
+      if (mov.tipo === "gasto") grupos[key].totalGastos += Number(mov.monto) || 0;
     });
 
-    const gruposOrdenados = Object.values(grupos).sort((a, b) => {
-      const aKey = a.year * 100 + a.monthIndex;
-      const bKey = b.year * 100 + b.monthIndex;
-      return bKey - aKey;
-    });
+    const gruposOrdenados = Object.values(grupos).sort(
+      (a, b) => b.year * 12 + b.monthIndex - (a.year * 12 + a.monthIndex)
+    );
 
     actualizarResumen(saldos.tarjeta, saldos.efectivo);
     renderMeses(gruposOrdenados);
+
+    setSync("ok", "Listo ✅");
+    btnRefresh.style.display = "none";
   } catch (err) {
-    console.error("Error al cargar movimientos", err);
+    console.error(err);
+    setSync("offline", "No se pudo cargar");
+    btnRefresh.style.display = "inline-block";
   }
 }
 
-// Agregar ingreso/gasto
 async function agregarMovimientoAPI(concepto, monto, tipo, medio) {
   const conceptoLimpio = (concepto || "").trim();
   const tipoLimpio = (tipo || "").trim().toLowerCase();
@@ -474,7 +795,6 @@ async function agregarMovimientoAPI(concepto, monto, tipo, medio) {
 
   if (!conceptoLimpio || !tipoLimpio || isNaN(montoNum) || montoNum <= 0) return;
 
-  // Validar medios permitidos
   if (tipoLimpio === TIPO_INGRESO) {
     if (![MEDIO_EFECTIVO, MEDIO_TRANSFERENCIA].includes(medioLimpio)) return;
   } else if (tipoLimpio === TIPO_GASTO) {
@@ -483,20 +803,31 @@ async function agregarMovimientoAPI(concepto, monto, tipo, medio) {
     return;
   }
 
-  const params = new URLSearchParams();
-  params.set("modo", "add");
-  params.set("concepto", conceptoLimpio);
-  params.set("monto", String(montoNum));
-  params.set("tipo", tipoLimpio);
-  params.set("medio", medioLimpio);
-
-  const url = API_URL + "?" + params.toString();
-
   try {
-    await fetch(url);
-    await cargarMovimientosDesdeAPI();
+    setSync("saving", "Guardando…");
+
+    const resp = await apiCall("add", {
+      concepto: conceptoLimpio,
+      monto: montoNum,
+      tipo: tipoLimpio,
+      medio: medioLimpio
+    }, { allowInteractive: false });
+
+    if (!resp?.ok) {
+      if (String(resp?.error || "") === "auth_required") {
+        setSync("offline", "Necesita Conectar");
+        btnRefresh.style.display = "inline-block";
+        return;
+      }
+      throw new Error(resp?.error || "add_failed");
+    }
+
+    // refrescar
+    await cargarMovimientosDesdeAPI({ allowInteractive: false });
   } catch (err) {
     console.error("Error al agregar movimiento", err);
+    setSync("offline", "No se pudo guardar");
+    btnRefresh.style.display = "inline-block";
   }
 }
 
@@ -510,20 +841,30 @@ async function moverPlataAPI(monto, modoCaja) {
 
   const concepto = medio === MEDIO_RETIRO ? "Retiro" : "Depósito";
 
-  const params = new URLSearchParams();
-  params.set("modo", "add");
-  params.set("concepto", concepto);
-  params.set("monto", String(montoNum));
-  params.set("tipo", TIPO_MOV);
-  params.set("medio", medio);
-
-  const url = API_URL + "?" + params.toString();
-
   try {
-    await fetch(url);
-    await cargarMovimientosDesdeAPI();
+    setSync("saving", "Guardando…");
+
+    const resp = await apiCall("add", {
+      concepto,
+      monto: montoNum,
+      tipo: TIPO_MOV,
+      medio
+    }, { allowInteractive: false });
+
+    if (!resp?.ok) {
+      if (String(resp?.error || "") === "auth_required") {
+        setSync("offline", "Necesita Conectar");
+        btnRefresh.style.display = "inline-block";
+        return;
+      }
+      throw new Error(resp?.error || "add_failed");
+    }
+
+    await cargarMovimientosDesdeAPI({ allowInteractive: false });
   } catch (err) {
     console.error("Error al mover plata", err);
+    setSync("offline", "No se pudo guardar");
+    btnRefresh.style.display = "inline-block";
   }
 }
 
@@ -575,8 +916,174 @@ inputMoverMonto.addEventListener("keydown", (event) => {
   }
 });
 
-// Cargar al iniciar
-window.addEventListener("load", () => {
+// =====================
+// UI: Conectar / Refresh
+// =====================
+async function runConnectFlow({ interactive, prompt } = { interactive: false, prompt: "consent" }) {
+  if (connectInFlight) return connectInFlight;
+
+  connectInFlight = (async () => {
+    try {
+      setSync("saving", interactive ? "Conectando…" : "Reconectando…");
+
+      await ensureOAuthToken(!!interactive, prompt || "consent");
+
+      // 🔑 VALIDACIÓN REAL CON BACKEND
+      const who = await apiCall("whoami", {}, { allowInteractive: !!interactive });
+
+      // 👇 ACÁ está la clave: si falla, MOSTRAR detail
+      if (!who?.ok) {
+        const msg =
+          (who?.error || "whoami_failed") +
+          (who?.detail ? ` | ${String(who.detail).slice(0, 400)}` : "");
+        console.error("[whoami_failed] respuesta completa:", who);
+        setSync("offline", msg);
+        btnRefresh.style.display = "inline-block";
+        return { ok: false, error: msg };
+      }
+
+      if (who.email) {
+        saveStoredOAuthEmail(who.email);
+        setAccountUI(who.email);
+      }
+
+      btnRefresh.style.display = "none";
+      await cargarMovimientosDesdeAPI({ allowInteractive: false });
+
+      return { ok: true };
+    } catch (e) {
+      console.error("[runConnectFlow catch]", e);
+      setSync("offline", `Necesita Conectar | ${String(e?.message || e).slice(0, 300)}`);
+      btnRefresh.style.display = "inline-block";
+      return { ok: false };
+    } finally {
+      connectInFlight = null;
+    }
+  })();
+
+  return connectInFlight;
+}
+
+async function reconnectAndRefresh() {
+  return await runConnectFlow({ interactive: false, prompt: "" });
+}
+
+btnConnect.addEventListener("click", async () => {
+  if (isConnectBusy()) return;
+
+  if (btnConnect.dataset.mode === "switch") {
+    // backup por si cancela
+    const prevStored = loadStoredOAuth();
+    const prevEmail = loadStoredOAuthEmail();
+    const prevRuntimeToken = oauthAccessToken;
+    const prevRuntimeExp = oauthExpiresAt;
+
+    clearStoredOAuth();
+    clearStoredOAuthEmail();
+    oauthAccessToken = "";
+    oauthExpiresAt = 0;
+
+    const res = await runConnectFlow({ interactive: true, prompt: "select_account" });
+
+    if (res?.canceled) {
+      if (prevStored?.access_token && prevStored?.expires_at) saveStoredOAuth(prevStored.access_token, prevStored.expires_at);
+      if (prevEmail) saveStoredOAuthEmail(prevEmail);
+      oauthAccessToken = prevRuntimeToken || "";
+      oauthExpiresAt = prevRuntimeExp || 0;
+
+      setAccountUI(prevEmail || "");
+      if (isTokenValid()) setSync("ok", "Listo ✅");
+      else {
+        setSync("offline", "Necesita Conectar");
+        btnRefresh.style.display = "inline-block";
+      }
+      return;
+    }
+
+    return;
+  }
+
+  const res = await runConnectFlow({ interactive: true, prompt: "consent" });
+  if (res?.canceled) return;
+});
+
+btnRefresh.addEventListener("click", async () => {
+  await reconnectAndRefresh();
+});
+
+// auto-refresh token (evita popups)
+setInterval(async () => {
+  try {
+    if (document.visibilityState !== "visible") return;
+    if (isConnectBusy()) return;
+    if (!oauthAccessToken) return;
+
+    // si falta poco para expirar, intento silencioso
+    if (Date.now() < (oauthExpiresAt - 120_000)) return;
+    await ensureOAuthToken(false);
+
+    if (isTokenValid() && syncPill.querySelector(".sync-text")?.textContent?.includes("Necesita Conectar")) {
+      await reconnectAndRefresh();
+    }
+  } catch {}
+}, 20_000);
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if (isConnectBusy()) return;
+
+  if (syncPill.querySelector(".sync-text")?.textContent?.includes("Necesita Conectar")) {
+    reconnectAndRefresh();
+  }
+});
+
+// =====================
+// INIT
+// =====================
+window.addEventListener("load", async () => {
   setOpcionesMedio();
-  cargarMovimientosDesdeAPI();
+
+  // OAuth init + cargar token guardado
+  try {
+    initOAuth();
+
+    const stored = loadStoredOAuth();
+    if (stored?.access_token && Date.now() < (stored.expires_at - 10_000)) {
+      oauthAccessToken = stored.access_token;
+      oauthExpiresAt = stored.expires_at;
+
+      const emailHint = loadStoredOAuthEmail();
+      setAccountUI(emailHint);
+    } else {
+      setAccountUI(loadStoredOAuthEmail());
+    }
+  } catch {
+    // si GIS no cargó, se ve al tocar Conectar
+  }
+
+  if (!isOnline()) {
+    setSync("offline", "Sin conexión");
+    btnRefresh.style.display = "none";
+    return;
+  }
+
+  // Auto-connect silencioso si hay email/token guardado
+  const emailHint = loadStoredOAuthEmail();
+  const stored = loadStoredOAuth();
+
+  if (emailHint || (stored?.access_token && stored?.expires_at)) {
+    await reconnectAndRefresh(); // sin popup
+  } else {
+    setSync("offline", "Necesita Conectar");
+    btnRefresh.style.display = "inline-block";
+  }
+});
+
+window.addEventListener("online", () => {
+  if (syncPill.querySelector(".sync-text")?.textContent?.includes("Necesita Conectar")) return;
+  reconnectAndRefresh();
+});
+
+window.addEventListener("offline", () => {
+  setSync("offline", "Sin conexión");
 });

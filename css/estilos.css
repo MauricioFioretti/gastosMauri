@@ -36,6 +36,102 @@ body {
   gap: 0.6rem;
 }
 
+/* ======= HEADER ROWS + OAUTH UI ======= */
+.titulo{
+  flex-direction: column;
+  align-items: stretch;
+  gap: .55rem;
+}
+
+.header-row{
+  display:flex;
+  align-items:center;
+  gap: .8rem;
+}
+
+.header-row-1{ justify-content:flex-start; }
+
+.header-row-2{
+  justify-content:space-between;
+  flex-wrap:wrap;
+  gap:.8rem;
+}
+
+.header-actions{
+  display:flex;
+  align-items:center;
+  gap:.5rem;
+}
+
+.btn-connect{
+  background: var(--accent);
+  color:#05060b;
+  border:none;
+}
+.btn-connect:hover{ background:#68ddff; }
+
+.btn-refresh{
+  background: rgba(255,255,255,0.08);
+}
+.btn-refresh:hover{ background: rgba(255,255,255,0.14); }
+
+.account-pill{
+  display:inline-flex;
+  align-items:center;
+  padding:.28rem .55rem;
+  border-radius:999px;
+  font-size:.85rem;
+  border:1px solid rgba(255,255,255,0.08);
+  background:rgba(255,255,255,0.04);
+  color: var(--text-muted);
+  max-width: 52vw;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+/* Sync pill */
+.sync-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:.5rem;
+  padding:.35rem .6rem;
+  border-radius:999px;
+  font-size:.85rem;
+  border:1px solid rgba(255,255,255,0.08);
+  background:rgba(255,255,255,0.04);
+  color: var(--text-muted);
+  user-select:none;
+}
+.sync-dot{
+  width:9px;
+  height:9px;
+  border-radius:999px;
+  background: var(--text-muted);
+}
+.sync-pill.ok{ color:#c8facc; border-color: rgba(39,192,132,.35); }
+.sync-pill.ok .sync-dot{ background: var(--ingreso); }
+.sync-pill.saving{ color:#dbeafe; border-color: rgba(76,201,240,.35); }
+.sync-pill.saving .sync-dot{ background: var(--accent); animation: pulse 1s infinite; }
+.sync-pill.offline{ color:#ffe9c2; border-color: rgba(255,209,102,.35); }
+.sync-pill.offline .sync-dot{ background: var(--total); }
+
+@keyframes pulse{
+  0%{ transform:scale(1); opacity:.6; }
+  50%{ transform:scale(1.25); opacity:1; }
+  100%{ transform:scale(1); opacity:.6; }
+}
+
+@media (max-width: 600px){
+  .header-row-2{
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .header-actions{ width:100%; }
+  .btn-connect, .btn-refresh{ width:100%; }
+  .account-pill{ max-width:100%; }
+}
+
 .titulo::before {
   content: "";
   width: 6px;
