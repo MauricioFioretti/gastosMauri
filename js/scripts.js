@@ -1,6 +1,7 @@
-// ================== CONFIG ==================
-const API_URL =
-  "https://script.google.com/macros/s/AKfycbxOUyVMSOPHvGRJXobkftG-tMDZUzDjTw795ao2t1xxTBVOEcqphY7GC3bjc1HrVdxJ/exec";
+// ================== CONFIG (Google Sheets API DIRECTO) ==================
+// ✅ Igual que Comidas: NO Apps Script, pegamos directo a Sheets API
+const SPREADSHEET_ID = "1WVMfCR99M7LEGu-wqKlYPvq7-3DKn50QZgmJzUwVrEw";
+const SHEET_NAME = "gastosMauri"; // pestaña que contiene los movimientos
 
 // =====================
 // CONFIG OAUTH (GIS)
@@ -8,14 +9,15 @@ const API_URL =
 // IMPORTANTE: Client ID del proyecto OAuth (external, test users restringidos)
 const OAUTH_CLIENT_ID = "839738936173-i2bit146ca9n3m8ad7gp2t062sl8q9q1.apps.googleusercontent.com";
 
-// Scope mínimo “igual que tu modelo”: drive.metadata.readonly
+// ✅ Sheets API directo: necesitamos permiso de planillas
 const OAUTH_SCOPES = [
   "openid",
   "email",
   "profile",
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/userinfo.profile",
-  "https://www.googleapis.com/auth/drive.metadata.readonly"
+  // ✅ leer/escribir en la planilla
+  "https://www.googleapis.com/auth/spreadsheets"
 ].join(" ");
 
 // LocalStorage OAuth
@@ -184,50 +186,212 @@ async function forceSwitchAccount() {
 }
 
 // =====================
-// API client (POST text/plain + JSON body)
+// API client (DIRECTO con Google APIs: Sheets + OIDC)
 // =====================
+// Estructura soportada en "gastosMauri":
+// - Nuevo (5 cols): A concepto | B monto | C tipo | D medio | E timestamp(ISO)
+// - Viejo (4 cols): A concepto | B tipo  | C monto | D timestamp
+// (Si ya tenés otra estructura, decime y lo adapto rápido.)
 async function apiPost_(payload) {
-  let r, text;
+  const mode = (payload?.mode || "").toString().toLowerCase();
+  const token = (payload?.access_token || "").toString();
+  if (!token) return { ok: false, error: "auth_required" };
+
+  const sheetEsc = encodeURIComponent(SHEET_NAME);
+
+  // Helpers locales
+  const norm = (v) => (v ?? "").toString().trim();
+  const normLower = (v) => norm(v).toLowerCase();
+  const isTipo = (v) => ["ingreso", "gasto", "mov"].includes(normLower(v));
+
+  // Número con coma/punto (por si Sheets devuelve "12.000" o "12000")
+  const parseNum = (v) => {
+    const s = norm(v);
+    if (!s) return 0;
+    // elimina separadores de miles comunes y normaliza coma decimal
+    const cleaned = s
+      .replace(/\s/g, "")
+      .replace(/\./g, "")     // miles con punto
+      .replace(/,/g, ".");    // decimal con coma
+    const n = Number(cleaned);
+    return isFinite(n) ? n : 0;
+  };
 
   try {
-    r = await fetch(API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(payload || {}),
-      cache: "no-store",
-      redirect: "follow"
-    });
+    // ---------- WHOAMI ----------
+    if (mode === "whoami") {
+      const r = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!r.ok) return { ok: false, error: "whoami_failed" };
+      const data = await r.json();
+      return { ok: true, email: (data?.email || "").toString().toLowerCase().trim() };
+    }
+
+    // ---------- GET (listar movimientos) ----------
+    if (mode === "get") {
+      // Leemos A2:E (hasta 5 columnas)
+      const url =
+        `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(SPREADSHEET_ID)}` +
+        `/values/${sheetEsc}!A2:E?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`;
+
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const txt = await r.text();
+      if (!r.ok) return { ok: false, error: "get_failed", detail: txt.slice(0, 800) };
+
+      const json = JSON.parse(txt);
+      const values = Array.isArray(json?.values) ? json.values : [];
+
+      const movimientos = values
+        .filter(row => norm(row?.[0]) !== "") // requiere concepto
+        .map(row => {
+          const A = norm(row?.[0]); // concepto
+          const B = norm(row?.[1]); // puede ser tipo o monto
+          const C = norm(row?.[2]); // puede ser monto o tipo
+          const D = norm(row?.[3]); // medio o timestamp (formato viejo)
+          const E = norm(row?.[4]); // timestamp (formatos de 5 cols)
+
+          const bIsTipo = isTipo(B);
+          const cIsTipo = isTipo(C);
+
+          const bNum = parseNum(B);
+          const cNum = parseNum(C);
+
+          const bIsNum = norm(B) !== "" && isFinite(bNum) && bNum !== 0; // si es 0 también puede ser válido, pero acá nos ayuda la detección
+          const cIsNum = norm(C) !== "" && isFinite(cNum); // monto puede ser 0, pero ok
+
+          // 🔎 Detectamos 3 formatos:
+          // FMT1 (tu front anterior "nuevo"):
+          //   A concepto | B monto | C tipo | D medio | E timestamp
+          // FMT2 (tu sheet real por la captura):
+          //   A concepto | B tipo  | C monto | D medio | E timestamp
+          // FMT3 (viejo 4 columnas):
+          //   A concepto | B tipo  | C monto | D timestamp
+
+          // FMT2: B es tipo y C es número (monto)
+          if (bIsTipo && cIsNum) {
+            return {
+              concepto: A,
+              tipo: normLower(B),
+              monto: cNum,
+              medio: normLower(D),
+              timestamp: E || ""
+            };
+          }
+
+          // FMT1: B es número (monto) y C es tipo
+          if ((bIsNum || (norm(B) !== "" && isFinite(parseNum(B)))) && cIsTipo) {
+            return {
+              concepto: A,
+              tipo: normLower(C),
+              monto: parseNum(B),
+              medio: normLower(D),
+              timestamp: E || ""
+            };
+          }
+
+          // FMT3 (viejo): A concepto | B tipo | C monto | D timestamp
+          if (bIsTipo) {
+            const tipoViejo = normLower(B);
+            const montoViejo = cNum;
+
+            // medio no existía, inferimos defaults razonables
+            const medioInferido =
+              tipoViejo === "ingreso" ? "transferencia" :
+              tipoViejo === "gasto" ? "tarjeta" :
+              // mov (viejo): no sabemos si fue retiro o deposito, lo dejamos como "retiro"
+              "retiro";
+
+            return {
+              concepto: A,
+              tipo: tipoViejo,
+              monto: montoViejo,
+              medio: medioInferido,
+              timestamp: D || ""
+            };
+          }
+
+          // Si no matchea nada, devolvemos algo “seguro” para no romper
+          return {
+            concepto: A,
+            tipo: normLower(C) || normLower(B) || "",
+            monto: cIsNum ? cNum : parseNum(B),
+            medio: normLower(D) || "",
+            timestamp: E || ""
+          };
+        });
+
+      // opcional: devolver email (como venías haciendo)
+      let email = "";
+      try {
+        const who = await apiPost_({ mode: "whoami", access_token: token });
+        if (who?.ok && who?.email) email = who.email;
+      } catch {}
+
+      return { ok: true, email, movimientos };
+    }
+
+    // ---------- ADD (agregar movimiento) ----------
+    if (mode === "add") {
+      const concepto = norm(payload?.concepto);
+      const monto = Number(payload?.monto);
+      const tipo = normLower(payload?.tipo);
+      const medio = normLower(payload?.medio);
+
+      if (!concepto || !tipo || !medio || !isFinite(monto) || monto <= 0) {
+        return { ok: false, error: "invalid_data" };
+      }
+
+      // ✅ Escribimos en el formato REAL de tu sheet (captura):
+      // A concepto | B tipo | C monto | D medio | E timestamp
+      const url =
+        `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(SPREADSHEET_ID)}` +
+        `/values/${sheetEsc}!A:E:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+
+      const body = {
+        values: [[concepto, tipo, String(monto), medio, new Date().toISOString()]]
+      };
+
+      const r = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
+
+      const txt = await r.text();
+      if (!r.ok) return { ok: false, error: "add_failed", detail: txt.slice(0, 800) };
+
+      return { ok: true };
+    }
+
+    // ---------- PING (opcional) ----------
+    if (mode === "ping") return { ok: true, pong: true };
+
+    return { ok: false, error: "bad_mode" };
   } catch (e) {
     return { ok: false, error: "network_error", detail: String(e?.message || e) };
   }
-
-  try { text = await r.text(); }
-  catch (e) { return { ok: false, error: "read_error", status: r.status, detail: String(e?.message || e) }; }
-
-  if (!r.ok) {
-    return { ok: false, error: "http_error", status: r.status, detail: (text || "").slice(0, 800) };
-  }
-
-  try { return JSON.parse(text); }
-  catch { return { ok: false, error: "non_json", status: r.status, detail: (text || "").slice(0, 800) }; }
 }
 
 async function apiCall(mode, payload = {}, opts = {}) {
   const allowInteractive = !!opts.allowInteractive;
 
-  // asegurar token
-  const token = await ensureOAuthToken(allowInteractive, opts.interactivePrompt || "consent");
+  let token = await ensureOAuthToken(allowInteractive, opts.interactivePrompt || "consent");
 
-  // POST único
-  let data = await apiPost_({ mode, access_token: token, ...(payload || {}) });
+  const body = { mode, access_token: token, ...(payload || {}) };
 
-  // retry si falta scope/auth
-  if (!data?.ok && (data?.error === "missing_scope" || data?.error === "auth_required")) {
-    const token2 = await ensureOAuthToken(true, "consent");
-    data = await apiPost_({ mode, access_token: token2, ...(payload || {}) });
+  let data = await apiPost_(body);
+
+  // retry si auth/scope
+  if (!data?.ok && (data?.error === "missing_scope" || data?.error === "auth_required" || data?.error === "whoami_failed")) {
+    token = await ensureOAuthToken(true, "consent");
+    body.access_token = token;
+    data = await apiPost_(body);
   }
 
-  // 🔥 DEBUG FUERTE: si backend devuelve error, lo mostramos completo
   if (!data?.ok) {
     console.error("[apiCall] mode:", mode, "payload:", payload, "resp:", data);
   }
@@ -269,6 +433,60 @@ const MESES_ES = [
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
 ];
 
+// ================== FECHAS (Sheets -> Date robusto) ==================
+// Soporta:
+// - ISO: 2026-02-02T12:34:56.000Z
+// - Sheets/Locale: 02/02/2026 09:10:00 (dd/mm/yyyy) o 2/2/2026
+function parseTimestampToDate(ts) {
+  if (ts === null || ts === undefined) return null;
+
+  // 0) Si Sheets devuelve número (serial date) o string numérica
+  if (typeof ts === "number" || (/^\d+(\.\d+)?$/.test(String(ts).trim()))) {
+    const n = Number(ts);
+    // Heurística: serial de Sheets suele ser > 20000
+    if (isFinite(n) && n > 20000) {
+      // Google Sheets serial date: días desde 1899-12-30
+      const ms = Math.round((n - 25569) * 86400 * 1000); // 25569 = 1970-01-01
+      const d = new Date(ms);
+      return isNaN(d.getTime()) ? null : d;
+    }
+  }
+
+  const s = String(ts).trim();
+  if (!s) return null;
+
+  // 1) Si tiene "/" asumimos primero dd/mm/yyyy (o dd/mm/yy)
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (m) {
+    const a = Number(m[1]); // dd (primero)
+    const b = Number(m[2]); // mm (segundo)
+    let yy = Number(m[3]);
+    if (yy < 100) yy += 2000;
+    const hh = Number(m[4] || 0);
+    const mi = Number(m[5] || 0);
+    const ss = Number(m[6] || 0);
+
+    // Interpretación preferida: dd/mm
+    let d = new Date(yy, b - 1, a, hh, mi, ss);
+
+    // 1b) Heurística anti “se fue al futuro”: si quedó MUY en futuro, probá mm/dd
+    const now = Date.now();
+    const tooFuture = d.getTime() > now + 1000 * 60 * 60 * 24 * 35; // >35 días
+    if (tooFuture) {
+      const dAlt = new Date(yy, a - 1, b, hh, mi, ss); // mm/dd
+      if (!isNaN(dAlt.getTime())) d = dAlt;
+    }
+
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // 2) ISO y otros parseables (acá sí usamos Date nativo)
+  const d1 = new Date(s);
+  if (!isNaN(d1.getTime())) return d1;
+
+  return null;
+}
+
 // ================== HEADER ==================
 const header = document.querySelector("header");
 
@@ -290,14 +508,25 @@ const headerRow2 = document.createElement("div");
 headerRow2.className = "header-row header-row-2";
 seccionTitulo.appendChild(headerRow2);
 
+// --- wrappers tipo "Notas para siempre" (solo estructura) ---
+const authBar = document.createElement("div");
+authBar.className = "auth-bar";
+headerRow2.appendChild(authBar);
+
+const authLeft = document.createElement("div");
+authLeft.className = "auth-left";
+authBar.appendChild(authLeft);
+
+// Sync pill (va a la izquierda)
 const syncPill = document.createElement("div");
 syncPill.className = "sync-pill";
 syncPill.innerHTML = `<span class="sync-dot"></span><span class="sync-text">Cargando…</span>`;
-headerRow2.appendChild(syncPill);
+authLeft.appendChild(syncPill);
 
+// Acciones (van abajo en mobile, a la derecha/abajo según CSS)
 const headerActions = document.createElement("div");
 headerActions.className = "header-actions";
-headerRow2.appendChild(headerActions);
+authBar.appendChild(headerActions);
 
 const btnConnect = document.createElement("button");
 btnConnect.className = "btn-connect";
@@ -317,7 +546,7 @@ headerActions.appendChild(btnRefresh);
 const accountPill = document.createElement("div");
 accountPill.className = "account-pill";
 accountPill.style.display = "none";
-headerRow2.appendChild(accountPill);
+authLeft.appendChild(accountPill);
 
 function setSync(state, text) {
   syncPill.classList.remove("ok", "saving", "offline");
@@ -678,15 +907,17 @@ function renderMeses(gruposOrdenados) {
       card.appendChild(fila2);
 
       if (mov.timestamp) {
-        const fecha = new Date(mov.timestamp);
-        const pFecha = document.createElement("span");
-        pFecha.classList = "mov-fecha";
-        pFecha.innerText = fecha.toLocaleDateString("es-AR", {
-          day: "2-digit",
-          month: "2-digit",
-          year: "2-digit",
-        });
-        fila2.appendChild(pFecha);
+        const fecha = parseTimestampToDate(mov.timestamp);
+        if (fecha) {
+          const pFecha = document.createElement("span");
+          pFecha.classList = "mov-fecha";
+          pFecha.innerText = fecha.toLocaleDateString("es-AR", {
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+          });
+          fila2.appendChild(pFecha);
+        }
       }
 
       const extra = document.createElement("span");
@@ -750,7 +981,10 @@ async function cargarMovimientosDesdeAPI({ allowInteractive = false } = {}) {
       aplicarASaldos(mov, saldos);
 
       if (!mov.timestamp) return;
-      const fecha = new Date(mov.timestamp);
+
+      const fecha = parseTimestampToDate(mov.timestamp);
+      if (!fecha) return;
+
       const year = fecha.getFullYear();
       const monthIndex = fecha.getMonth();
       const key = `${year}-${monthIndex}`;
@@ -771,9 +1005,11 @@ async function cargarMovimientosDesdeAPI({ allowInteractive = false } = {}) {
       if (mov.tipo === "gasto") grupos[key].totalGastos += Number(mov.monto) || 0;
     });
 
-    const gruposOrdenados = Object.values(grupos).sort(
-      (a, b) => b.year * 12 + b.monthIndex - (a.year * 12 + a.monthIndex)
-    );
+    const gruposOrdenados = Object.values(grupos).sort((a, b) => {
+      const ka = a.year * 12 + a.monthIndex;
+      const kb = b.year * 12 + b.monthIndex;
+      return kb - ka; // DESC: primero meses más nuevos
+    });
 
     actualizarResumen(saldos.tarjeta, saldos.efectivo);
     renderMeses(gruposOrdenados);
