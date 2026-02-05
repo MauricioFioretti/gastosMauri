@@ -433,6 +433,131 @@ const MESES_ES = [
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
 ];
 
+// ================== FORMATO MONTO (input en vivo) ==================
+// Miles: "."  (Argentina) -> 1.000.000
+// Decimal: "," -> 123,45
+const MONEY_THOUSAND_SEP = ".";
+const MONEY_DECIMAL_SEP = ",";
+
+function onlyDigits(s) {
+  return (s || "").replace(/\D+/g, "");
+}
+
+function formatThousands(intDigits) {
+  // "1234567" -> "1.234.567"
+  const d = onlyDigits(intDigits);
+  if (!d) return "";
+  // evita "00012" -> "12" (salvo que sea todo ceros)
+  const trimmed = d.replace(/^0+(?=\d)/, "");
+  return trimmed.replace(/\B(?=(\d{3})+(?!\d))/g, MONEY_THOUSAND_SEP);
+}
+
+function sanitizeMoneyInputToParts(inputValue) {
+  // ✅ AR: decimal SOLO con coma ","
+  // ✅ puntos "." y espacios se tratan como separadores de miles (se ignoran para partir decimal)
+  const s0 = String(inputValue || "").trim();
+  if (!s0) return { intDigits: "", decDigits: "", hasDec: false };
+
+  // sacamos separadores de miles típicos ANTES de analizar decimal
+  // (incluye el "." que agrega el formateador y cualquier espacio)
+  const s = s0.replace(/\./g, "").replace(/\s/g, "");
+
+  // si el usuario escribe coma, eso sí es decimal
+  const decPos = s.indexOf(",");
+  let left = s;
+  let right = "";
+  let hasDec = false;
+
+  if (decPos >= 0) {
+    hasDec = true;
+    left = s.slice(0, decPos);
+    right = s.slice(decPos + 1);
+  }
+
+  const intDigits = onlyDigits(left);
+  let decDigits = onlyDigits(right);
+
+  // limitar decimales a 2
+  decDigits = decDigits.slice(0, 2);
+
+  return { intDigits, decDigits, hasDec };
+}
+
+function countDigits(str) {
+  return (String(str || "").match(/\d/g) || []).length;
+}
+
+function caretPosAfterNDigits(formatted, nDigits) {
+  if (nDigits <= 0) return 0;
+  let seen = 0;
+  for (let i = 0; i < formatted.length; i++) {
+    if (/\d/.test(formatted[i])) {
+      seen++;
+      if (seen >= nDigits) return i + 1;
+    }
+  }
+  return formatted.length;
+}
+
+function formatMoneyInputLive(el) {
+  const old = String(el.value || "");
+  const caret = el.selectionStart ?? old.length;
+
+  const digitsBeforeCaret = countDigits(old.slice(0, caret));
+
+  const { intDigits, decDigits, hasDec } = sanitizeMoneyInputToParts(old);
+
+  const intFmt = formatThousands(intDigits);
+  const newVal =
+    (intFmt || "") +
+    (hasDec ? (MONEY_DECIMAL_SEP + (decDigits || "")) : "");
+
+  // guarda raw numérico para usarlo en cálculos/Sheets sin separadores
+  // raw: "1234.56" (decimal con punto para Number())
+  const raw =
+    (onlyDigits(intDigits).replace(/^0+(?=\d)/, "") || "0") +
+    (hasDec ? ("." + (decDigits || "")) : "");
+
+  el.value = newVal;
+  el.dataset.raw = raw;
+
+  // restaurar caret (aprox estable)
+  const newCaret = caretPosAfterNDigits(newVal, digitsBeforeCaret);
+  try { el.setSelectionRange(newCaret, newCaret); } catch {}
+}
+
+function readMoneyInputNumber(el) {
+  const raw = String(el?.dataset?.raw || "").trim();
+  if (!raw) {
+    // fallback si todavía no pasó por formatter
+    const { intDigits, decDigits, hasDec } = sanitizeMoneyInputToParts(el?.value || "");
+    const r =
+      (onlyDigits(intDigits).replace(/^0+(?=\d)/, "") || "0") +
+      (hasDec ? ("." + (decDigits || "")) : "");
+    const n2 = Number(r);
+    return isFinite(n2) ? n2 : 0;
+  }
+  const n = Number(raw);
+  return isFinite(n) ? n : 0;
+}
+
+function attachMoneyInputFormatting(el) {
+  // inicializa raw
+  el.dataset.raw = "";
+
+  el.addEventListener("input", () => formatMoneyInputLive(el));
+
+  // si pegás texto raro, se limpia al toque
+  el.addEventListener("paste", () => {
+    setTimeout(() => formatMoneyInputLive(el), 0);
+  });
+
+  // al salir, si quedó vacío, dejamos raw vacío también
+  el.addEventListener("blur", () => {
+    if (!String(el.value || "").trim()) el.dataset.raw = "";
+  });
+}
+
 // ================== FECHAS (Sheets -> Date robusto) ==================
 // Soporta:
 // - ISO: 2026-02-02T12:34:56.000Z
@@ -661,11 +786,18 @@ labelMonto.htmlFor = "input-monto";
 seccionAgregar.appendChild(labelMonto);
 
 const inputMonto = document.createElement("input");
-inputMonto.type = "number";
+// ✅ tiene que ser text para poder formatear miles mientras tipeás
+inputMonto.type = "text";
+inputMonto.inputMode = "decimal";           // teclado numérico en mobile
+inputMonto.autocomplete = "off";
+inputMonto.spellcheck = false;
+
 inputMonto.id = "input-monto";
-inputMonto.placeholder = "Ej: 15000";
-inputMonto.step = "0.01";
+inputMonto.placeholder = "Ej: 15.000";
 seccionAgregar.appendChild(inputMonto);
+
+// ✅ activa separadores en vivo
+attachMoneyInputFormatting(inputMonto);
 
 // Tipo
 const labelTipo = document.createElement("label");
@@ -724,11 +856,18 @@ labelMoverMonto.htmlFor = "input-mover-monto";
 seccionMover.appendChild(labelMoverMonto);
 
 const inputMoverMonto = document.createElement("input");
-inputMoverMonto.type = "number";
+// ✅ text para poder formatear en vivo
+inputMoverMonto.type = "text";
+inputMoverMonto.inputMode = "decimal";
+inputMoverMonto.autocomplete = "off";
+inputMoverMonto.spellcheck = false;
+
 inputMoverMonto.id = "input-mover-monto";
-inputMoverMonto.placeholder = "Ej: 50000";
-inputMoverMonto.step = "0.01";
+inputMoverMonto.placeholder = "Ej: 50.000";
 seccionMover.appendChild(inputMoverMonto);
+
+// ✅ activa separadores en vivo
+attachMoneyInputFormatting(inputMoverMonto);
 
 const filaMoverBtns = document.createElement("div");
 filaMoverBtns.classList = "mover-botones";
@@ -1110,23 +1249,35 @@ selectTipo.addEventListener("change", () => {
 });
 
 buttonAgregar.addEventListener("click", () => {
-  agregarMovimientoAPI(inputConcepto.value, inputMonto.value, selectTipo.value, selectMedio.value);
+  const montoNum = readMoneyInputNumber(inputMonto);
+
+  agregarMovimientoAPI(
+    inputConcepto.value,
+    montoNum,
+    selectTipo.value,
+    selectMedio.value
+  );
 
   inputConcepto.value = "";
   inputMonto.value = "";
+  inputMonto.dataset.raw = "";
   selectTipo.value = TIPO_GASTO;
   setOpcionesMedio();
   inputConcepto.focus();
 });
 
 btnRetirar.addEventListener("click", () => {
-  moverPlataAPI(inputMoverMonto.value, MEDIO_RETIRO);
+  const montoNum = readMoneyInputNumber(inputMoverMonto);
+  moverPlataAPI(montoNum, MEDIO_RETIRO);
   inputMoverMonto.value = "";
+  inputMoverMonto.dataset.raw = "";
 });
 
 btnDepositar.addEventListener("click", () => {
-  moverPlataAPI(inputMoverMonto.value, MEDIO_DEPOSITO);
+  const montoNum = readMoneyInputNumber(inputMoverMonto);
+  moverPlataAPI(montoNum, MEDIO_DEPOSITO);
   inputMoverMonto.value = "";
+  inputMoverMonto.dataset.raw = "";
 });
 
 // ENTERs cómodos
