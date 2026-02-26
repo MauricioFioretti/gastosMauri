@@ -1144,6 +1144,20 @@ async function cargarMovimientosDesdeAPI({ allowInteractive = false } = {}) {
       if (mov.tipo === "gasto") grupos[key].totalGastos += Number(mov.monto) || 0;
     });
 
+    // Ordenar movimientos dentro de cada mes: más nuevo -> más viejo
+    Object.values(grupos).forEach((g) => {
+      g.movimientos.sort((m1, m2) => {
+        const d1 = parseTimestampToDate(m1?.timestamp);
+        const d2 = parseTimestampToDate(m2?.timestamp);
+
+        // Si alguno no parsea, lo mandamos al final
+        const t1 = d1 ? d1.getTime() : -Infinity;
+        const t2 = d2 ? d2.getTime() : -Infinity;
+
+        return t2 - t1; // DESC
+      });
+    });
+
     const gruposOrdenados = Object.values(grupos).sort((a, b) => {
       const ka = a.year * 12 + a.monthIndex;
       const kb = b.year * 12 + b.monthIndex;
